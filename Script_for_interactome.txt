@@ -1,0 +1,114 @@
+# Загрузка библиотек
+library(STRINGdb)
+library(dplyr)
+library(igraph)
+library(ggraph)
+library(tidygraph)
+library(ggplot2)
+library(openxlsx)
+library(Hmisc)
+library(viridis)
+
+# Установка рабочей директории
+output_dir <- "C:/PPI/PatientK/Result"
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+setwd(output_dir)
+
+# Загрузка данных
+data <- read.delim(
+  "C:/PPI/PatientK/input/Genes_K.csv",
+  sep = ";",
+  header = TRUE,
+  col.names = c("pvalue", "logFC", "gene"),
+  stringsAsFactors = FALSE
+) %>%
+  mutate(gene = trimws(gene))
+
+# Проверка и коррекция символов генов
+corrected <- checkGeneSymbols(unique(data$gene), species = "human")
+data <- data %>%
+  mutate(
+    original_gene = gene,
+    gene = corrected$Suggested.Symbol[match(gene, corrected$x)]
+  ) %>%
+  filter(!is.na(gene)) %>%
+  select(-original_gene)
+
+# Подключение к STRING
+string_db <- STRINGdb$new(
+  species = 9606,
+  version = "12.0",
+  score_threshold = 400,
+  network_type = "full"
+)
+
+# Маппинг данных
+mapped_data <- string_db$map(data, "gene", removeUnmappedRows = TRUE)
+
+# Получение сети взаимодействий
+ppi_network <- string_db$get_subnetwork(mapped_data$STRING_id)
+
+# Преобразование в tidygraph
+ppi_tbl <- as_tbl_graph(ppi_network) %>%
+  left_join(mapped_data, by = c("name" = "STRING_id")) %>%
+  mutate(community = as.factor(group_louvain()))
+
+# --- Визуализация PNG и PDF ---
+p <- ggraph(ppi_tbl, layout = "fr") +
+  geom_edge_link(color = "grey80", alpha = 0.5, width = 0.3) +
+  geom_node_point(aes(
+    color = community,
+    size = ifelse(is.na(logFC), 1, abs(logFC))
+  )) +
+  geom_node_text(
+    aes(label = ifelse(abs(logFC) > 1.5, gene, "")),
+    repel = TRUE,
+    size = 2.5,
+    color = "black",
+    max.overlaps = 100
+  ) +
+  scale_color_viridis_d() +
+  theme_void() +
+  theme(
+    legend.position = "none",
+    plot.background = element_rect(fill = "white", color = NA),
+    panel.background = element_rect(fill = "white", color = NA),
+    plot.title = element_text(hjust = 0.5, face = "bold", size = 16)
+  ) +
+  ggtitle("STRING-like Protein Interaction Network")
+
+ggsave("PPI_STRING_Style_HQ.png", plot = p, width = 16, height = 16, dpi = 600, bg = "white")
+ggsave("PPI_STRING_Style_HQ.pdf", plot = p, width = 16, height = 16)
+
+# --- Генерация интерактивной ссылки на STRING (макс 300 узлов) ---
+string_ids <- unique(mapped_data$STRING_id)
+string_ids <- string_ids[1:min(300, length(string_ids))]  # Ограничим до 300
+string_link <- string_db$get_link(string_ids)
+cat("\n🔗 Ссылка на интерактивную сеть STRING:\n", string_link, "\n")
+browseURL(string_link)
+
+# --- Топ-30 по числу взаимодействий ---
+top30 <- degree(ppi_network, mode = "all") %>%
+  sort(decreasing = TRUE) %>%
+  head(30) %>%
+  as.data.frame() %>%
+  tibble::rownames_to_column("STRING_id") %>%
+  rename(connections = ".")
+
+top30 <- top30 %>%
+  left_join(mapped_data, by = "STRING_id") %>%
+  select(STRING_id, connections, gene, pvalue)
+
+# --- Excel-таблица с топ-30 ---
+wb <- createWorkbook()
+addWorksheet(wb, "Top30_Proteins")
+writeData(wb, "Top30_Proteins", top30)
+setColWidths(wb, "Top30_Proteins", cols = 1:4, widths = "auto")
+saveWorkbook(wb, "Top30_Proteins.xlsx", overwrite = TRUE)
+
+# --- Итог ---
+cat("\n✅ Файлы сохранены:\n",
+    "• PNG-график: PPI_STRING_Style_HQ.png\n",
+    "• PDF-график: PPI_STRING_Style_HQ.pdf\n",
+    "• Excel таблица: Top30_Proteins.xlsx\n",
+    "• STRING-ссылка: ", string_link, "\n")
