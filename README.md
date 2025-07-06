@@ -9,7 +9,7 @@ This project includes various files uploaded to document and analyze a case repo
 - `README.md`: This file, providing an overview of the repository.
 - `Script_for_interactome.txt`: A script related to interactome analysis.
 - `Top20_HubS2.xlsx`: A spreadsheet containing top 20 hub data.
-- `inf_for_Kravtsov_2.csv`: A CSV file with additional data for Kravtsov.
+- `inf_for_Kravtsov_2.csv`: A CSV file with additional data.
 
 ## Getting Started
 1. Clone the repository: `git clone https://github.com/virtualscreenlab/Case_report.git`
